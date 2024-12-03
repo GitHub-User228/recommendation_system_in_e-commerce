@@ -1,0 +1,95 @@
+experiment_name_prefix: "recsys_e-comm"
+
+PreprocessingComponentConfig:
+  run_name: 'preprocessing'
+  category_tree_filename: 'category_tree.parquet'
+  item_properties_filename: 'item_properties.parquet'
+  events_filename: 'events.parquet'
+  test_days: 14
+  target_days: 7
+
+MatrixBuilderComponentConfig:
+  run_name: 'matrices'
+  batch_size: 1000
+
+FeaturesGeneratorComponentConfig:
+  run_name: 'features_generation'
+
+EDAComponentConfig:
+  run_name: 'eda'
+
+ALSModelComponentConfig:
+  run_name: 'base_model_als'
+  n_recommendations: 10
+  min_users_per_item: 5
+  max_similar_items: 10
+  factors: 200
+  iterations: 15
+  regularization: 0.05
+  alpha: 1.0
+  filter_already_liked_items: False
+  calculate_training_loss: True
+  random_state: 42
+BPRModelComponentConfig:
+  run_name: 'base_model_bpr'
+  n_recommendations: 10
+  min_users_per_item: 5
+  max_similar_items: 10
+  factors: 200
+  iterations: 50
+  learning_rate: 0.05
+  regularization: 0.0001
+  filter_already_liked_items: False
+  verify_negative_samples: True
+  random_state: 42
+
+Item2ItemModelComponentConfig:
+  run_name: 'base_model_item2item'
+  batch_size: 2000
+  n_recommendations: 10
+  min_users_per_item: 5
+  n_neighbors: 10
+  n_components: 50
+  similarity_criteria: 'manhattan'
+
+TopItemsModelComponentConfig:
+  run_name: 'top_items'
+  min_rating: 2
+  top_n_items: 100
+  n_recommendations: 10
+
+EnsembleModelComponentConfig:
+  run_name: 'ranking_model'
+  base_models:
+    - als
+    - bpr
+    - item2item
+  include_top_items: True
+  n_recommendations: 10
+  negative_samples_per_user: 5
+  sampling_seed: 42
+  target_metrics_order:
+    Recall10: False
+    Precision10: False
+    CoverageItem10: False
+    CoverageUser10: False
+  ensemble_model_candidates:
+    XGBClassifier:
+      model_params:
+        objective: 'binary:logistic'
+        eval_metric: 'logloss'
+        verbosity: 0
+        random_state: 42
+    LGBMClassifier:
+      model_params:
+        objective: 'binary'
+        metric: 'binary_logloss'
+        verbose: 0
+        random_state: 42
+    CatBoostClassifier:
+      model_params:
+        loss_function: 'Logloss'
+        grow_policy: 'Depthwise'
+        auto_class_weights: 'Balanced'
+        random_state: 42
+        verbose: False
