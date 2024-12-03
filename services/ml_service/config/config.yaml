@@ -1,0 +1,56 @@
+endpoints:
+    recs: '/recommend'
+    es_put: '/put'
+    es_get: '/get'
+
+n_recs:
+    min: 1
+    max: 10
+    
+base_store:
+    user_id: 'visitorid'
+    item_id: 'itemid'
+    similar_item_id: 'similar_itemid'
+    score_col_pattern: 'score_'
+events_store:
+    max_events_per_user: 10
+    events_filename: 'events.json'
+    test_events_filename: 'test_events.json'
+    is_testing: True
+
+tester:
+    n_requests: 1000
+    delay: 0.1
+    multiple_ips: True
+    shuffle_requests: False
+    random_state: 42
+    groups_rate:
+        old: 0.2
+        old_with_events: 0.2
+        new: 0.2
+        new_with_events: 0.2
+        invalid: 0.2
+
+request_rate_limit:
+    recs:
+        global:
+            times: 1000
+            seconds: 60
+        per_ip:
+            times: 100
+            seconds: 60
+    es_put:
+        global:
+            times: 1000
+            seconds: 60
+        per_ip:
+            times: 1000
+            seconds: 60
+    es_get:
+        global:
+            times: 1000
+            seconds: 60
+        per_ip:
+            times: 1000
+            seconds: 60
+

@@ -1,0 +1,48 @@
+services:
+
+  redis:
+    image: redis:latest
+    env_file:
+      - ./.env
+    ports:
+      - "${REDIS_VM_PORT}:${REDIS_DOCKER_PORT}"
+    hostname: redis
+
+  main-app:
+    env_file:
+      - ./.env
+    build:
+      context: ./ml_service
+    ports:
+      - "${APP_VM_PORT}:${APP_DOCKER_PORT}"
+    volumes:
+      - type: bind
+        source: ./ml_service
+        target: /fastapi_app/ml_service
+    hostname: fastapi_app
+    depends_on:
+      - redis
+    user: "${UID}:${GID}"
+
+  prometheus:
+    image: prom/prometheus
+    env_file:
+      - ./.env
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+    ports:
+      - "${PROM_VM_PORT}:${PROM_DOCKER_PORT}"
+    volumes:
+      - "./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml"
+    hostname: prometheus
+    depends_on:
+      - main-app
+
+  grafana:
+    image: grafana/grafana
+    env_file:
+      - ./.env
+    ports:
+      - "${GRAFANA_VM_PORT}:${GRAFANA_DOCKER_PORT}"
+    depends_on:
+      - prometheus

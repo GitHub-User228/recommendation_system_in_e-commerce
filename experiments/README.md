@@ -122,7 +122,3 @@ The resulting recommendation model achived the following metrics:
 - `NDCG@10`: 3.7%
 - `CoverageItem@10`: 13.6%
 - `CoverageUser@10`: 13.6%
-
----
-
-Bucket: s3-student-mle-20240730-73c4e0c760
