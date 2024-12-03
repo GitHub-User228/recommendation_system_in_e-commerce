@@ -37,9 +37,11 @@ The [dataset](https://www.kaggle.com/datasets/retailrocket/ecommerce-dataset) co
     - `value` - property value
 
 
-The task is to increase the number of `add to cart` events (i.e. adding an item to the cart by a user). 
+The task is to increase the number of `add to cart` events (i.e. adding an item to the cart by a user).
 
-Though there are other events apart from the `add to cart` event, it is possible to utilise the data about other events to build a recommendation model that recommends items that are more likely to be added to the cart:
+The task can be solved if to build a recommendation model that recommends items that are more likely to be added to the cart. Offline metrics like `Precision@K`, `Recall@K`, `Coverage@K` can be used to evaluate the model and decide whether the model is good enough to be used in production. Considering online metrics, the model can be evaluated by the `Click-Through Rate (CTR)` metric - in the case of this task, the CTR metric is the number of `add to cart` events divided by the number of all events.
+
+Considering a dataset, though there are other events apart from the `add to cart` event, it is possible to utilise the data about other events to build a recommendation model that recommends items that are more likely to be added to the cart:
 - consider all events when training base models, but use different weights for different events. In this case, the `transaction` event has the highest weight, and the `view` event has the lowest weight.
 - consider only at least `add to cart` events when making recommendations by all models and evaluating all models
 

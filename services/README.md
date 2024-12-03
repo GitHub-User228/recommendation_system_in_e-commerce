@@ -91,6 +91,6 @@ Since there are multiple sources of recommendations, it is essential to specify 
 
 ## TODO
 
-- Enhance the monitoing system by tracking `view`, `add to cart`, `transaction` events separately, possibly using a different events store for each type of event.
+- Enhance the monitoing system by tracking `view`, `add to cart`, `transaction` events separately, possibly using a different events store for each type of event. This way it will be possible to track the `CTR` metric, which is very important indicator whether the model actually helps to increase the number of `add to cart` events.
 - In case of enhanced monitoring, reconsider how the online recommendations are made. For example, mix items from different events store via round-robin fashion prioritizing `transaction` events over `view` and `add to cart` events, `add to cart` events over `view` events.
 - In case of enhanced monitoring, reconsider the `put` request structure by adding a new field for the type of event.
