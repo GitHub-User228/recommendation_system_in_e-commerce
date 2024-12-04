@@ -4,10 +4,12 @@ This file describes the monitoring system used to monitor the ML microservice.
 
 ## Description
 
-Grafana's dashboard is used to monitor the ML microservice. A [dashboard.json](/services/grafana/dashboard.json) consists of 13 different panels:
+Grafana's dashboard is used to monitor the ML microservice. A [dashboard.json](/services/grafana/dashboard.json) consists of 15 different panels:
 - `CPU Usage`: The CPU usage over time window.
 - `RAM Usage`: The memory usage over time window.
 - `Successful Requests Increase`: Successful requests count increase over time window for all endpoints.
+- `Events Types Total Count`: Number of event types (`view`, `add_to_cart`, `transaction`).
+- `Add To Cart Events Ratio`: The ratio of add to cart events. This is essentially the `CTR` metric in the task.
 - `Invalid Requests Increase`: Invalid requests count increase over time window for all endpoints.
 - `Failed Requests Processing Error Increase`: Increase in the number of times the microservice failed to process the request over time window for all endpoints.
 - `Too Many Requests Error Increase`: Increase in the number of requests that exceeded the time limit over time window for all endpoints.

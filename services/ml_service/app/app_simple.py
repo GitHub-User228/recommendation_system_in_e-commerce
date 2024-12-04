@@ -48,7 +48,7 @@ app = FastAPI(lifespan=lifespan)
 
 
 @app.post(config["endpoints"]["es_put"])
-async def put(user_id: int, item_id: int) -> Dict[str, Any]:
+async def put(user_id: int, item_id: int, item_type: str) -> Dict[str, Any]:
     """
     Puts an event for the given user_id and item_id into the events store.
 
@@ -57,6 +57,8 @@ async def put(user_id: int, item_id: int) -> Dict[str, Any]:
             The unique identifier for the user.
         item_id (int):
             The unique identifier for the item.
+        item_type (str):
+            The type of the item.
 
     Returns:
         Dict[str, Any]:
@@ -71,7 +73,13 @@ async def put(user_id: int, item_id: int) -> Dict[str, Any]:
             request.
     """
     try:
-        app.events_store.put(query={"user_id": user_id, "item_id": item_id})
+        app.events_store.put(
+            query={
+                "user_id": user_id,
+                "item_id": item_id,
+                "item_type": item_type,
+            }
+        )
         return {"result": "ok"}
     except HTTPException as e:
         raise e

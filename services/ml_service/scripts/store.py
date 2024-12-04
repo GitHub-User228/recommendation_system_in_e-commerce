@@ -315,14 +315,18 @@ class EventStore(BaseStore):
                 prefix = "test"
                 filename = self.config.test_events_filename
             self.logger.info(f"Loading {prefix} events history data...")
-            self.events = {
-                int(key): deque(value)
-                for key, value in read_json(
-                    Path(env_vars.events_store_dir, filename)
-                ).items()
-            }
+            self.events = dict([(k, {}) for k in self.config.item_types])
+            for k, v in read_json(
+                Path(env_vars.events_store_dir, filename)
+            ).items():
+                if k not in self.config.item_types:
+                    self.logger.warning(
+                        f"Item type {k} is not valid. Ignoring it."
+                    )
+                    continue
+                self.events[k] = {int(v1): deque(v2) for v1, v2 in v.items()}
         except Exception as e:
-            self.events = {}
+            self.events = dict([(k, {}) for k in self.config.item_types])
             self.logger.warning(
                 f"Unable to load events history data. "
                 f"Starting with an empty dictionary."
@@ -367,13 +371,14 @@ class EventStore(BaseStore):
 
     def put(self, query: Dict[str, Any]) -> None:
         """
-        Adds an item ID to the event history for the given user ID.
-        If the user does not have an event history yet, it creates
-        a new one with a maximum length specified by the configuration.
+        Adds an item ID of item type to the event history for the
+        given user ID. If the user does not have an event history yet,
+        it creates a new one with a maximum length specified by the
+        configuration.
 
         Args:
             query (Dict[str, Any]):
-                The put query containing the user ID and item ID.
+                The put query containing the user ID, item ID and item type.
 
         Raises:
             HTTPException (500):
@@ -383,18 +388,19 @@ class EventStore(BaseStore):
         query = self.validate_query(query, get_query=False)
 
         try:
-            if query.user_id not in self.events:
-                self.events[query.user_id] = deque(
+            if query.user_id not in self.events[query.item_type]:
+                self.events[query.item_type][query.user_id] = deque(
                     maxlen=self.config.max_events_per_user
                 )
-            self.events[query.user_id].append(query.item_id)
+            self.events[query.item_type][query.user_id].append(query.item_id)
             self.logger.info(
-                f"Added item {query.item_id} to user {query.user_id}"
+                f"Added item {query.item_id} with type {query.item_type} to "
+                f"user {query.user_id}"
             )
         except Exception as e:
             msg = (
                 f"Unexpected error occured while adding item {query.item_id} "
-                f"to user {query.user_id}"
+                f"with type {query.item_type} to user {query.user_id}"
             )
             self.logger.error(msg)
             raise HTTPException(
@@ -422,9 +428,15 @@ class EventStore(BaseStore):
         query = self.validate_query(query, get_query=True)
 
         try:
-            item_ids = list(self.events[query.user_id])[
-                -min(len(self.events[query.user_id]), query.k) :
-            ]
+            item_ids = []
+            for item_type in self.events:
+                user_item_ids = list(self.events[item_type][query.user_id,])
+                item_ids.append(
+                    user_item_ids[-min(len(user_item_ids), query.k) :]
+                )
+            # Mix items from different item types
+            item_ids = get_top_k_items(item_ids, query.k)
+
             self.logger.info(
                 f"Retrieved {len(item_ids)} ({item_ids}) item"
                 f"{'s' if len(item_ids) > 1 else ''} for user {query.user_id}"
@@ -442,7 +454,10 @@ class EventStore(BaseStore):
         Closes the event store by saving the events to a file.
         """
         self.logger.info("Closing EventStore...")
-        self.events = {key: list(value) for key, value in self.events.items()}
+        for k in self.events:
+            self.events[k] = {
+                key: list(value) for key, value in self.events[k].items()
+            }
         filename = self.config.events_filename
         if self.config.is_testing:
             filename = self.config.test_events_filename

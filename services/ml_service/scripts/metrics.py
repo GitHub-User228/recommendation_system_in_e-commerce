@@ -32,6 +32,12 @@ UNEXPECTED_ERROR_COUNT = Counter(
     ["endpoint"],
 )
 
+EVENTS_COUNT = Counter(
+    "events_count",
+    "Number of events in the events store per item type",
+    ["item_type"],
+)
+
 REQUEST_DURATION_HISTOGRAM = Histogram(
     "http_request_duration_seconds",
     "HTTP request duration in seconds",

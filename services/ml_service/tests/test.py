@@ -197,24 +197,26 @@ class Tester:
             self.logger.info("Generating events...")
 
             items = list(SimilarItemsStore().recs.keys())
-            events = dict(
-                zip(
-                    user_ids,
-                    np.random.choice(
-                        items,
-                        size=len(user_ids)
-                        * config["events_store"]["max_events_per_user"],
-                        replace=True,
-                    )
-                    .reshape(
-                        (
-                            len(user_ids),
-                            config["events_store"]["max_events_per_user"],
+            events = {}
+            for item_type in config["events_store"]["item_types"]:
+                events[item_type] = dict(
+                    zip(
+                        user_ids,
+                        np.random.choice(
+                            items,
+                            size=len(user_ids)
+                            * config["events_store"]["max_events_per_user"],
+                            replace=True,
                         )
-                    )
-                    .tolist(),
-                ),
-            )
+                        .reshape(
+                            (
+                                len(user_ids),
+                                config["events_store"]["max_events_per_user"],
+                            )
+                        )
+                        .tolist(),
+                    ),
+                )
             self.logger.info("Generated events")
 
         save_json(

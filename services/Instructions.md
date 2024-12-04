@@ -182,7 +182,7 @@ You should be able to see the logs in the [test_service.log](/services/ml_servic
 It is important to note that the script tests only the load on the `/recommend` and `/get` endpoints, but not the `/put` endpoint, which is used for adding new events (items for a user) to the events store. In order to test the `/put` endpoint, you can run the following command:
 
 ```bash
-curl -X 'POST' 'http://localhost:4602/put?user_id=1&item_id=12' -H 'accept: application/json'
+curl -X 'POST' 'http://localhost:4602/put?user_id=1&item_id=12&item_type=add_to_cart' -H 'accept: application/json'
 ```
 You should recieve `{"result":"ok"}` in case of successful request.
 

@@ -1,6 +1,7 @@
 from pathlib import Path
 import pyarrow.parquet as pq
 from functools import lru_cache
+from typing import Literal, List
 from pydantic import BaseModel, Field, model_validator
 
 from scripts.env import env_vars
@@ -209,6 +210,11 @@ class EventsStoreConfig(BaseModel):
         description="Whether the events store is used for testing",
     )
 
+    item_types: List[str] = Field(
+        description="List of item types",
+        default=["transaction", "add_to_cart", "view"],
+    )
+
 
 class EventsStorePutQueryParams(BaseModel):
     """
@@ -224,6 +230,10 @@ class EventsStorePutQueryParams(BaseModel):
     )
     item_id: int = Field(
         description="Item ID",
+    )
+
+    item_type: Literal["view", "add_to_cart", "transaction"] = Field(
+        description="Item type",
     )
 
 

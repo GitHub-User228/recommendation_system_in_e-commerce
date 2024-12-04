@@ -17,6 +17,10 @@ events_store:
     events_filename: 'events.json'
     test_events_filename: 'test_events.json'
     is_testing: True
+    item_types:
+        - 'transaction'
+        - 'add_to_cart'
+        - 'view'
 
 tester:
     n_requests: 1000

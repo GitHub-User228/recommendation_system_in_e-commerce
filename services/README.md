@@ -87,10 +87,3 @@ Since there are multiple sources of recommendations, it is essential to specify 
 1. top `k` items according to similarity score are retrieved from online recommendations of a single source given a list of items from events store
 2. top `k` items are retrieved in the round-robin fashion (preserving the original order) from different sources of online recommendations after applying the first step for each one
 3. top `k` items are retrieved by combining the result of step 2 (online recs) and either offline or popular recommendations in the round-robin fashion. Online recs are given higher priority in any case (e.g. the first item in the recs is from online recommendations)
-
-
-## TODO
-
-- Enhance the monitoing system by tracking `view`, `add to cart`, `transaction` events separately, possibly using a different events store for each type of event. This way it will be possible to track the `CTR` metric, which is very important indicator whether the model actually helps to increase the number of `add to cart` events.
-- In case of enhanced monitoring, reconsider how the online recommendations are made. For example, mix items from different events store via round-robin fashion prioritizing `transaction` events over `view` and `add to cart` events, `add to cart` events over `view` events.
-- In case of enhanced monitoring, reconsider the `put` request structure by adding a new field for the type of event.

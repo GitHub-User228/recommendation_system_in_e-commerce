@@ -16,6 +16,7 @@ from scripts.metrics import (
     FAILED_PROCESSING_COUNT,
     UNEXPECTED_ERROR_COUNT,
     REQUEST_DURATION_HISTOGRAM,
+    EVENTS_COUNT,
 )
 
 
@@ -48,7 +49,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
         # Initialize FastApiHandler
         app.handler = FastApiHandler(is_simple=False)
 
-        # Initialize Events Store
+        # Initialize Events Stores
         app.events_store = EventStore()
 
         yield
@@ -84,7 +85,7 @@ instrumentator.instrument(app).expose(app)
         Depends(create_limiter("es_put", per_ip=True)),
     ],
 )
-async def put(user_id: int, item_id: int) -> Dict[str, Any]:
+async def put(user_id: int, item_id: int, item_type: str) -> Dict[str, Any]:
     """
     Puts an event for the given user_id and item_id into the events store.
 
@@ -93,6 +94,8 @@ async def put(user_id: int, item_id: int) -> Dict[str, Any]:
             The unique identifier for the user.
         item_id (int):
             The unique identifier for the item.
+        item_type (str):
+            The type of the item.
 
     Returns:
         Dict[str, Any]:
@@ -108,10 +111,17 @@ async def put(user_id: int, item_id: int) -> Dict[str, Any]:
     """
     start_time = time.time()
     try:
-        app.events_store.put(query={"user_id": user_id, "item_id": item_id})
+        app.events_store.put(
+            query={
+                "user_id": user_id,
+                "item_id": item_id,
+                "item_type": item_type,
+            }
+        )
         REQUEST_DURATION_HISTOGRAM.labels(
             endpoint=config["endpoints"]["es_put"], is_valid="true"
         ).observe(time.time() - start_time)
+        EVENTS_COUNT.labels(item_type=item_type).inc()
         return {"result": "ok"}
     except HTTPException as e:
         if e.status_code == 400:
