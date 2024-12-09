@@ -119,8 +119,8 @@ Additionally, the most popular items that were at least `added to cart` were ret
 
 The resulting recommendation model achived the following metrics:
 
-- `Precision@10`: 0.9%
-- `Recall@10`: 5.2%
-- `NDCG@10`: 3.7%
-- `CoverageItem@10`: 13.6%
+- `Precision@10`: 1.4%
+- `Recall@10`: 9.2%
+- `NDCG@10`: 6.8%
+- `CoverageItem@10`: 13.2%
 - `CoverageUser@10`: 13.6%

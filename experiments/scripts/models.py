@@ -1,6 +1,5 @@
 import os
 import sys
-import time
 from pathlib import Path
 
 import logging
@@ -9,7 +8,7 @@ import pandas as pd
 from tqdm.auto import tqdm
 from abc import ABC, abstractmethod
 from scipy.sparse import csr_matrix
-from typing import List, Any, Literal
+from typing import List, Any, Literal, Dict
 from sklearn.preprocessing import LabelEncoder
 from sklearn.neighbors import NearestNeighbors
 from sklearn.decomposition import TruncatedSVD
@@ -103,12 +102,422 @@ class BaseRecommender(ABC):
         pass
 
     @abstractmethod
-    def recommend(self, *args, **kwargs):
+    def _recommend_on_batch(
+        self,
+        user_ids: List[int],
+        user_items_matrix: csr_matrix,
+        n_recommendations: int,
+        filter_items: List[int] | None = None,
+    ) -> Dict[str, Any]:
         """
-        Generate recommendations.
+        Recommend items for the given user IDs.
         This method must be implemented by subclasses.
+
+        Args:
+            user_ids (List[int]):
+                A list of user IDs for which to generate
+                recommendations.
+            user_items_matrix (csr_matrix):
+                The user-item matrix in sparse CSR format.
+                Must be the same as before fitting the model.
+            n_recommendations (int):
+                The number of recommendations to generate for each
+                user.
+            filter_items (List[int] | None, optional):
+                A list of item IDs to filter out from the
+                recommendations. Defaults to None.
+
+        Returns:
+            Dict[str, Any]:
+                A dictionary containing the recommended items
+                with the corresponding scores.
         """
         pass
+
+    def _filter_filter_items(self, filter_items: List[int]) -> List[int]:
+        """
+        Filter items from filter_items list so that only items that
+        are presented in the model are left.
+
+        Args:
+            filter_items (List[int]):
+                A list of item IDs to filter.
+
+        Returns:
+            List[int]:
+                A list of filtered item IDs.
+        """
+        filter_items = list(
+            set(filter_items) & set(self.item_id_encoder.classes_)
+        )
+        if len(filter_items) == 0:
+            self._logger.warning("No items to filter are in the model")
+        else:
+            filter_items = self.item_id_encoder.transform(filter_items)
+            rate = round(
+                len(filter_items) / len(self.item_id_encoder.classes_) * 100,
+                2,
+            )
+            self._logger.info(
+                f"Found {len(filter_items)} ({rate}%) items from "
+                f"{len(self.item_id_encoder.classes_)} to be filtered"
+            )
+        return filter_items
+
+    def recommend(
+        self,
+        user_ids: List[int],
+        user_items_matrix: csr_matrix,
+        n_recommendations: int,
+        item_id_col: str,
+        user_id_col: str,
+        score_col: str,
+        batch_size: int = 100,
+        save_path: Path | None = None,
+        filter_items: List[int] | None = None,
+    ) -> pd.DataFrame | None:
+        """
+        Recommend items for the given user IDs.
+
+        Args:
+            user_ids (List[int]):
+                A list of user IDs for which to generate
+                recommendations.
+            user_items_matrix (csr_matrix):
+                The user-item matrix in sparse CSR format.
+                Must be the same as before fitting the model.
+            n_recommendations (int):
+                The number of recommendations to generate for each
+                user.
+            user_id_col (str):
+                The column name in the DataFrame to contain user IDs.
+            item_id_col (str):
+                The column name in the DataFrame to contain item IDs.
+            score_col (str):
+                The column name in the DataFrame to contain the
+                scores of the recommendations.
+            batch_size (int, optional):
+                The number of users to process in each batch.
+                Defaults to 100.
+            save_path (Path | None):
+                The file path to save the DataFrame containing the
+                recommendations. If None, the DataFrame will not be
+                saved, but returned. Defaults to None.
+            filter_items (List[int] | None, optional):
+                A list of item IDs to filter out from the
+                recommendations. Defaults to None.
+
+        Returns:
+            pd.DataFrame | None:
+                A DataFrame containing the recommended item IDs and
+                their scores for each user. Returns None if no input
+                users were found within the fitted model, or save_path
+                was provided.
+
+        Raises:
+            TypeError:
+                If any of the input arguments are not of the expected
+                types.
+            ValueError:
+                If any of the input arguments are invalid or
+                inconsistent.
+        """
+
+        # Validate input
+        self._validate_type(user_ids, list, "user_ids")
+        if not all(isinstance(user_id, int) for user_id in user_ids):
+            msg = "user_ids must contain only integers"
+            self._logger.error(msg)
+            raise TypeError(msg)
+        self._validate_type(user_items_matrix, csr_matrix, "user_items_matrix")
+        self._validate_positive_integer(n_recommendations, "n_recommendations")
+        self._validate_type(item_id_col, str, "item_id_col")
+        self._validate_type(user_id_col, str, "user_id_col")
+        self._validate_type(score_col, str, "score_col")
+        self._validate_positive_integer(batch_size, "batch_size")
+        if save_path != None:
+            self._validate_type(save_path, Path, "save_path")
+            if save_path.suffix != ".parquet":
+                msg = "save_path must be a path to parquet file"
+                self._logger.error(msg)
+                raise ValueError(msg)
+        if filter_items is not None:
+            self._validate_type(filter_items, list, "filter_items")
+            if not all(isinstance(item_id, int) for item_id in filter_items):
+                msg = "filter_items must contain only integers"
+                self._logger.error(msg)
+                raise TypeError(msg)
+
+        # Filter only users that are presented in the als model
+        n_users = len(user_ids)
+        user_ids = list(set(user_ids) & set(self.user_id_encoder.classes_))
+        if len(user_ids) == 0:
+            self._logger.warning("No users in the input are in the model")
+            return None
+        rate = round(len(user_ids) / n_users * 100, 2)
+        self._logger.info(
+            f"Found {len(user_ids)} ({rate}%) users from {n_users} in the model"
+        )
+
+        # Filter only items that are presented in the model
+        if isinstance(filter_items, list) and len(filter_items) > 0:
+            filter_items = self._filter_filter_items(filter_items)
+
+        # Filter user_items_matrix
+        user_items_matrix = user_items_matrix[:, self.item_mask]
+        user_items_matrix = user_items_matrix[self.user_mask, :]
+        self._logger.info("Filtered user_items_matrix")
+
+        # Default item id encoder
+        encoder = self.item_id_encoder
+
+        # If it is item2item model, do extra steps
+        if self.__class__.__name__ == "Item2ItemModel":
+
+            # Retrieve items that will not be filtered
+            if isinstance(filter_items, list) and len(filter_items) > 0:
+                item_ids_enc = list(
+                    set(
+                        list(range(len(self.item_id_encoder.classes_)))
+                    ).difference(filter_items)
+                )
+                # Create new encoder with filtered items
+                encoder = LabelEncoder()
+                encoder.classes_ = np.array(
+                    self.item_id_encoder.classes_[item_ids_enc]
+                )
+            else:
+                item_ids_enc = list(range(len(self.item_id_encoder.classes_)))
+
+            # Fit the NearestNeighbors model
+            self.nn = NearestNeighbors(
+                n_neighbors=self.n_neighbors,
+                metric=self.similarity_criteria,
+                algorithm="ball_tree",
+                n_jobs=-1,
+            )
+            self.nn.fit(self.item_features_matrix[item_ids_enc, :])
+            self._logger.info("Fitted NearestNeighbors model")
+
+        # Empty save_path if parquet file exists
+        if save_path and save_path.exists():
+            os.remove(save_path)
+
+        # Create an empty list to store recommendations
+        all_recommendations = []
+
+        # Process in batches
+        for start in tqdm(
+            range(0, len(user_ids), batch_size), desc="Processing user batches"
+        ):
+            # Calculate the end index for the current batch
+            end = min(start + batch_size, len(user_ids))
+
+            # Get the user IDs for the current batch
+            batch_user_ids = user_ids[start:end]
+
+            # Transform user_ids to their corresponding encodings
+            batch_user_ids_enc = self.user_id_encoder.transform(batch_user_ids)
+
+            # Get the user-item matrix for the current batch
+            batch_user_items_matrix = user_items_matrix[batch_user_ids_enc, :]
+
+            # Get recommendations for the current batch
+            output = self._recommend_on_batch(
+                user_ids=batch_user_ids_enc,
+                user_items_matrix=batch_user_items_matrix,
+                n_recommendations=n_recommendations,
+                filter_items=filter_items,
+            )
+
+            # Create a dataframe from recommendations
+            df = pd.DataFrame(
+                {
+                    user_id_col: batch_user_ids,
+                    item_id_col: output["item_ids"].tolist(),
+                    score_col: output["scores"].tolist(),
+                }
+            )
+            del output
+
+            df = df.apply(pd.Series.explode)
+            for col, dtype in {
+                user_id_col: int,
+                item_id_col: int,
+                score_col: float,
+            }.items():
+                df[col] = df[col].astype(dtype)
+            df = df.sort_values(
+                by=[user_id_col, score_col], ascending=[True, False]
+            ).reset_index(drop=True)
+
+            # Transform the item_ids back to their original labels
+            df[item_id_col] = encoder.inverse_transform(df[item_id_col])
+
+            # Save the recommendations to a Parquet file if save_path
+            # is provided
+            if save_path:
+                df.to_parquet(
+                    save_path,
+                    engine="fastparquet",
+                    append=save_path.exists(),
+                )
+            # Append the recommendations to the list
+            else:
+                all_recommendations.append(df)
+            del df
+
+        self._logger.info("Generated recommendations for all users")
+
+        # Return the recommendations as a single dataframe if save_path
+        # is not provided
+        if save_path == None:
+            return pd.concat(all_recommendations, ignore_index=True)
+
+    def get_similar_items(
+        self,
+        max_similar_items: int,
+        item_id_col: str,
+        item_id_col_similar: str,
+        score_col: str,
+        batch_size: int = 100,
+        save_path: Path | None = None,
+        filter_items: List[int] | None = None,
+    ) -> pd.DataFrame | None:
+        """
+        Generates a DataFrame containing the most similar items for
+        each item in the model.
+
+        Args:
+            max_similar_items (int):
+                The maximum number of similar items to retrieve for
+                each item.
+            item_id_col (str):
+                The column name in the DataFrame to contain item IDs.
+            item_id_col_similar (str):
+                The column name in the DataFrame to contain similar
+                item IDs.
+            score_col (str):
+                The column name in the DataFrame to contain the
+                similarity scores.
+            bathch_size (int, optional):
+                The number of users to process in each batch.
+                Defaults to 100.
+            save_path (Path | None):
+                The file path to save the DataFrame containing the
+                similar items. If None, the DataFrame will not be
+                saved, but returned. Defaults to None.
+            filter_items (List[int] | None, optional):
+                A list of item IDs to filter out from the
+                recommendations. Defaults to None.
+
+        Returns:
+            pd.DataFrame | None:
+                A DataFrame containing the item ID, similar item ID,
+                and similarity score. Returns None if save_path
+                was provided.
+
+        Raises:
+            TypeError:
+                If any of the input arguments are not of the expected
+                types.
+            ValueError:
+                If any of the input arguments are invalid or
+                inconsistent.
+        """
+
+        # Validate input
+        self._validate_positive_integer(max_similar_items, "max_similar_items")
+        self._validate_type(item_id_col, str, "item_id_col")
+        self._validate_type(item_id_col_similar, str, "item_id_col_similar")
+        self._validate_type(score_col, str, "score_col")
+        self._validate_positive_integer(batch_size, "batch_size")
+        if save_path != None:
+            self._validate_type(save_path, Path, "save_path")
+            if save_path.suffix != ".parquet":
+                msg = "save_path must be a path to parquet file"
+                self._logger.error(msg)
+                raise ValueError(msg)
+        if filter_items is not None:
+            self._validate_type(filter_items, list, "filter_items")
+            if not all(isinstance(item_id, int) for item_id in filter_items):
+                msg = "filter_items must contain only integers"
+                self._logger.error(msg)
+                raise TypeError(msg)
+
+        # Filter only items that are presented in the model
+        if isinstance(filter_items, list) and len(filter_items) > 0:
+            filter_items = self._filter_filter_items(filter_items)
+
+        # Empty save_path if parquet file exists
+        if save_path and save_path.exists():
+            os.remove(save_path)
+
+        # Initialize empty list to store all similar items data
+        all_similar_items = []
+
+        # Process in batches
+        for start in tqdm(
+            range(0, len(self.item_id_encoder.classes_), batch_size),
+            desc="Processing item batches",
+        ):
+            # Calculate the end index for the current batch
+            end = min(start + batch_size, len(self.item_id_encoder.classes_))
+
+            # Get the enooded item IDs for the current batch
+            item_ids_enc = list(range(start, end))
+
+            # Generate similar items
+            similar_item_ids_enc, scores = self.model.similar_items(
+                item_ids_enc,
+                N=max_similar_items + 1,
+                filter_items=filter_items,
+            )
+
+            # Create a DataFrame to hold the results
+            df = pd.DataFrame(
+                {
+                    item_id_col: item_ids_enc,
+                    item_id_col_similar: similar_item_ids_enc.tolist(),
+                    score_col: scores.tolist(),
+                }
+            )
+            del item_ids_enc, scores
+
+            df = df.apply(pd.Series.explode)
+            for col, dtype in {
+                item_id_col: int,
+                item_id_col_similar: int,
+                score_col: float,
+            }.items():
+                df[col] = df[col].astype(dtype)
+
+            # Remove rows same as the original items
+            df = df.query(f"{item_id_col} != {item_id_col_similar}")
+
+            # Transform the similar_item_id and item_id back to original
+            for col in [item_id_col, item_id_col_similar]:
+                df[col] = self.item_id_encoder.inverse_transform(df[col])
+
+            # Save the data to a Parquet file if save_path
+            # is provided
+            if save_path:
+                df.to_parquet(
+                    save_path,
+                    engine="fastparquet",
+                    append=save_path.exists(),
+                )
+            # Append the data to the list
+            else:
+                all_similar_items.append(df)
+            del df
+
+        self._logger.info(f"Generated similar items")
+
+        # Return the data as a single dataframe if save_path
+        # is not provided
+        if save_path == None:
+            return pd.concat(all_similar_items, ignore_index=True)
 
 
 class ALS(BaseRecommender):
@@ -293,16 +702,13 @@ class ALS(BaseRecommender):
 
         return self
 
-    def recommend(
+    def _recommend_on_batch(
         self,
         user_ids: List[int],
         user_items_matrix: csr_matrix,
         n_recommendations: int,
-        user_id_col: str,
-        item_id_col: str,
-        score_col: str,
         filter_items: List[int] | None = None,
-    ) -> pd.DataFrame | None:
+    ) -> Dict[str, Any]:
         """
         Recommend items for the given user IDs.
 
@@ -316,237 +722,25 @@ class ALS(BaseRecommender):
             n_recommendations (int):
                 The number of recommendations to generate for each
                 user.
-            user_id_col (str):
-                The column name in the DataFrame to contain user IDs.
-            item_id_col (str):
-                The column name in the DataFrame to contain item IDs.
-            score_col (str):
-                The column name in the DataFrame to contain the
-                scores of the recommendations.
             filter_items (List[int] | None, optional):
                 A list of item IDs to filter out from the
                 recommendations. Defaults to None.
 
         Returns:
-            pd.DataFrame | None:
-                A DataFrame containing the recommended item IDs and
-                their scores for each user. Returns None if no input
-                users were found within the fitted model.
-
-        Raises:
-            TypeError:
-                If any of the input arguments are not of the expected
-                types.
-            ValueError:
-                If any of the input arguments are invalid or
-                inconsistent.
+            Dict[str, Any]:
+                A dictionary containing the recommended items
+                with the corresponding scores.
         """
-
-        # Validate input
-        self._validate_type(user_ids, list, "user_ids")
-        if not all(isinstance(user_id, int) for user_id in user_ids):
-            msg = "user_ids must contain only integers"
-            self._logger.error(msg)
-            raise TypeError(msg)
-        self._validate_type(user_items_matrix, csr_matrix, "user_items_matrix")
-        self._validate_positive_integer(n_recommendations, "n_recommendations")
-        self._validate_type(item_id_col, str, "item_id_col")
-        self._validate_type(user_id_col, str, "user_id_col")
-        if filter_items is not None:
-            self._validate_type(filter_items, list, "filter_items")
-            if not all(isinstance(item_id, int) for item_id in filter_items):
-                msg = "filter_items must contain only integers"
-                self._logger.error(msg)
-                raise TypeError(msg)
-
-        # Filter only users that are presented in the als model
-        n_users = len(user_ids)
-        user_ids = list(set(user_ids) & set(self.user_id_encoder.classes_))
-        if len(user_ids) == 0:
-            self._logger.warning("No users in the input are in the model")
-            return None
-        rate = round(len(user_ids) / n_users * 100, 2)
-        self._logger.info(
-            f"Found {len(user_ids)} ({rate}%) users from {n_users} in the model"
-        )
-
-        # Filter only items that are presented in the model
-        if isinstance(filter_items, list) and len(filter_items) > 0:
-            filter_items = list(
-                set(filter_items) & set(self.item_id_encoder.classes_)
-            )
-            if len(filter_items) == 0:
-                self._logger.warning("No items to filter are in the model")
-            else:
-                filter_items = self.item_id_encoder.transform(filter_items)
-                rate = round(
-                    len(filter_items)
-                    / len(self.item_id_encoder.classes_)
-                    * 100,
-                    2,
-                )
-                self._logger.info(
-                    f"Found {len(filter_items)} ({rate}%) items from "
-                    f"{len(self.item_id_encoder.classes_)} to be filtered"
-                )
-
-        # Transform user_ids to their corresponding encodings
-        user_ids_enc = self.user_id_encoder.transform(user_ids)
-
-        # Filter user_items_matrix
-        user_items_matrix = user_items_matrix[:, self.item_mask]
-        user_items_matrix = user_items_matrix[self.user_mask, :]
-        user_items_matrix = user_items_matrix[user_ids_enc, :]
-        self._logger.info("Filtered user_items_matrix")
-
-        # Get the recommendations
-        item_ids_enc, scores = self.model.recommend(
-            userid=user_ids_enc,
+        output = {}
+        output["item_ids"], output["scores"] = self.model.recommend(
+            userid=user_ids,
             user_items=user_items_matrix,
             N=n_recommendations,
             filter_already_liked_items=self.filter_already_liked_items,
             recalculate_user=False,
             filter_items=filter_items,
         )
-        self._logger.info("Generated recommendations")
-
-        df = pd.DataFrame(
-            {
-                user_id_col: user_ids,
-                item_id_col: item_ids_enc.tolist(),
-                score_col: scores.tolist(),
-            }
-        )
-        del item_ids_enc, scores
-
-        df = df.apply(pd.Series.explode)
-        for col, dtype in {
-            user_id_col: int,
-            item_id_col: int,
-            score_col: float,
-        }.items():
-            df[col] = df[col].astype(dtype)
-        df = df.sort_values(
-            by=[user_id_col, score_col], ascending=[True, False]
-        ).reset_index(drop=True)
-
-        # Transform the item_ids back to their original labels
-        df[item_id_col] = self.item_id_encoder.inverse_transform(
-            df[item_id_col]
-        )
-        self._logger.info("Prepared a Dataframe with recommendations")
-
-        return df
-
-    def get_similar_items(
-        self,
-        max_similar_items: int,
-        item_id_col: str,
-        item_id_col_similar: str,
-        score_col: str,
-        filter_items: List[int] | None = None,
-    ) -> pd.DataFrame:
-        """
-        Generates a DataFrame containing the most similar items for
-        each item in the model.
-
-        Args:
-            max_similar_items (int):
-                The maximum number of similar items to retrieve for
-                each item.
-            item_id_col (str):
-                The column name in the DataFrame to contain item IDs.
-            item_id_col_similar (str):
-                The column name in the DataFrame to contain similar
-                item IDs.
-            score_col (str):
-                The column name in the DataFrame to contain the
-                similarity scores.
-            filter_items (List[int] | None, optional):
-                A list of item IDs to filter out from the
-                recommendations. Defaults to None.
-
-        Returns:
-            pd.DataFrame:
-                A DataFrame containing the item ID, similar item ID,
-                and similarity score.
-
-        Raises:
-            TypeError:
-                If any of the input arguments are not of the expected
-                types.
-            ValueError:
-                If any of the input arguments are invalid or
-                inconsistent.
-        """
-
-        # Validating input
-        self._validate_positive_integer(max_similar_items, "max_similar_items")
-        self._validate_type(item_id_col, str, "item_id_col")
-        self._validate_type(item_id_col_similar, str, "item_id_col_similar")
-        self._validate_type(score_col, str, "score_col")
-        if filter_items is not None:
-            self._validate_type(filter_items, list, "filter_items")
-            if not all(isinstance(item_id, int) for item_id in filter_items):
-                msg = "filter_items must contain only integers"
-                self._logger.error(msg)
-                raise TypeError(msg)
-
-        # Filter only items that are presented in the model
-        if isinstance(filter_items, list) and len(filter_items) > 0:
-            filter_items = list(
-                set(filter_items) & set(self.item_id_encoder.classes_)
-            )
-            if len(filter_items) == 0:
-                self._logger.warning("No items to filter are in the model")
-            else:
-                filter_items = self.item_id_encoder.transform(filter_items)
-                rate = round(
-                    len(filter_items)
-                    / len(self.item_id_encoder.classes_)
-                    * 100,
-                    2,
-                )
-                self._logger.info(
-                    f"Found {len(filter_items)} ({rate}%) items from "
-                    f"{len(self.item_id_encoder.classes_)} to be filtered"
-                )
-
-        # generating similar items
-        item_ids_enc = list(range(len(self.item_id_encoder.classes_)))
-        similar_item_ids_enc, scores = self.model.similar_items(
-            item_ids_enc,
-            N=max_similar_items + 1,
-            filter_items=filter_items,
-        )
-        self._logger.info("Generated similar items")
-
-        # Create a DataFrame to hold the results
-        df = pd.DataFrame(
-            {
-                item_id_col: item_ids_enc,
-                item_id_col_similar: similar_item_ids_enc.tolist(),
-                score_col: scores.tolist(),
-            }
-        )
-        del item_ids_enc, scores
-        df = df.apply(pd.Series.explode)
-        for col, dtype in {
-            item_id_col: int,
-            item_id_col_similar: int,
-            score_col: float,
-        }.items():
-            df[col] = df[col].astype(dtype)
-
-        # Removing rows same as the original items
-        df = df.query(f"{item_id_col} != {item_id_col_similar}")
-
-        # Transforming the similar_item_id and item_id back to original
-        for col in [item_id_col, item_id_col_similar]:
-            df[col] = self.item_id_encoder.inverse_transform(df[col])
-        self._logger.info("Prepared a dataframe with similar items")
-
-        return df
+        return output
 
 
 class BPR(BaseRecommender):
@@ -730,16 +924,13 @@ class BPR(BaseRecommender):
 
         return self
 
-    def recommend(
+    def _recommend_on_batch(
         self,
         user_ids: List[int],
         user_items_matrix: csr_matrix,
         n_recommendations: int,
-        user_id_col: str,
-        item_id_col: str,
-        score_col: str,
         filter_items: List[int] | None = None,
-    ) -> pd.DataFrame | None:
+    ) -> Dict[str, Any]:
         """
         Recommend items for the given user IDs.
 
@@ -753,240 +944,25 @@ class BPR(BaseRecommender):
             n_recommendations (int):
                 The number of recommendations to generate for each
                 user.
-            user_id_col (str):
-                The column name in the DataFrame to contain user IDs.
-            item_id_col (str):
-                The column name in the DataFrame to contain item IDs.
-            score_col (str):
-                The column name in the DataFrame to contain the
-                scores of the recommendations.
             filter_items (List[int] | None, optional):
                 A list of item IDs to filter out from the
                 recommendations. Defaults to None.
 
         Returns:
-            pd.DataFrame | None:
-                A DataFrame containing the recommended item IDs and
-                their scores for each user. Returns None if no input
-                users were found within the fitted model.
-
-        Raises:
-            TypeError:
-                If any of the input arguments are not of the expected
-                types.
-            ValueError:
-                If any of the input arguments are invalid or
-                inconsistent.
+            Dict[str, Any]:
+                A dictionary containing the recommended items
+                with the corresponding scores.
         """
-
-        # Validate input
-        self._validate_type(user_ids, list, "user_ids")
-        if not all(isinstance(user_id, int) for user_id in user_ids):
-            msg = "user_ids must contain only integers"
-            self._logger.error(msg)
-            raise TypeError(msg)
-        self._validate_type(user_items_matrix, csr_matrix, "user_items_matrix")
-        self._validate_positive_integer(n_recommendations, "n_recommendations")
-        self._validate_type(item_id_col, str, "item_id_col")
-        self._validate_type(user_id_col, str, "user_id_col")
-        self._validate_type(score_col, str, "score_col")
-        if filter_items is not None:
-            self._validate_type(filter_items, list, "filter_items")
-            if not all(isinstance(item_id, int) for item_id in filter_items):
-                msg = "filter_items must contain only integers"
-                self._logger.error(msg)
-                raise TypeError(msg)
-
-        # Filter only users that are presented in the model
-        n_users = len(user_ids)
-        user_ids = list(set(user_ids) & set(self.user_id_encoder.classes_))
-        if len(user_ids) == 0:
-            self._logger.warning("No users in the input are in the model")
-            return None
-        rate = round(len(user_ids) / n_users * 100, 2)
-        self._logger.info(
-            f"Found {len(user_ids)} ({rate}%) users from {n_users} in the model"
-        )
-
-        # Filter only items that are presented in the model
-        if isinstance(filter_items, list) and len(filter_items) > 0:
-            filter_items = list(
-                set(filter_items) & set(self.item_id_encoder.classes_)
-            )
-            if len(filter_items) == 0:
-                self._logger.warning("No items to filter are in the model")
-            else:
-                filter_items = self.item_id_encoder.transform(
-                    filter_items
-                ).tolist()
-                rate = round(
-                    len(filter_items)
-                    / len(self.item_id_encoder.classes_)
-                    * 100,
-                    2,
-                )
-                self._logger.info(
-                    f"Found {len(filter_items)} ({rate}%) items from "
-                    f"{len(self.item_id_encoder.classes_)} to be filtered"
-                )
-
-        # Transforming user_ids to their corresponding encodings
-        user_ids_enc = self.user_id_encoder.transform(user_ids)
-
-        # Filtering user_items_matrix
-        user_items_matrix = user_items_matrix[:, self.item_mask]
-        user_items_matrix = user_items_matrix[self.user_mask, :]
-        user_items_matrix = user_items_matrix[user_ids_enc, :]
-        self._logger.info("Filtered user_items_matrix")
-
-        # Getting the recommendations
-        item_ids_enc, scores = self.model.recommend(
-            userid=user_ids_enc,
+        output = {}
+        output["item_ids"], output["scores"] = self.model.recommend(
+            userid=user_ids,
             user_items=user_items_matrix,
             N=n_recommendations,
             filter_already_liked_items=self.filter_already_liked_items,
             recalculate_user=False,
             filter_items=filter_items,
         )
-        self._logger.info("Generated recommendations")
-
-        df = pd.DataFrame(
-            {
-                user_id_col: user_ids,
-                item_id_col: item_ids_enc.tolist(),
-                score_col: scores.tolist(),
-            }
-        )
-        del item_ids_enc, scores
-
-        df = df.apply(pd.Series.explode)
-        for col, dtype in {
-            user_id_col: int,
-            item_id_col: int,
-            score_col: float,
-        }.items():
-            df[col] = df[col].astype(dtype)
-        df = df.sort_values(
-            by=[user_id_col, score_col], ascending=[True, False]
-        ).reset_index(drop=True)
-
-        # Transforming the item_ids back to their original labels
-        df[item_id_col] = self.item_id_encoder.inverse_transform(
-            df[item_id_col]
-        )
-        self._logger.info("Prepared a Dataframe with recommendations")
-
-        return df
-
-    def get_similar_items(
-        self,
-        max_similar_items: int,
-        item_id_col: str,
-        item_id_col_similar: str,
-        score_col: str,
-        filter_items: List[int] | None = None,
-    ) -> pd.DataFrame:
-        """
-        Generates a DataFrame containing the most similar items for
-        each item in the model.
-
-        Args:
-            max_similar_items (int):
-                The maximum number of similar items to retrieve for
-                each item.
-            item_id_col (str):
-                The column name in the DataFrame to contain item IDs.
-            item_id_col_similar (str):
-                The column name in the DataFrame to contain similar
-                item IDs.
-            score_col (str):
-                The column name in the DataFrame to contain the
-                similarity scores.
-            filter_items (List[int] | None, optional):
-                A list of item IDs to filter out from the
-                recommendations. Defaults to None.
-
-        Returns:
-            pd.DataFrame:
-                A DataFrame containing the item ID, similar item ID,
-                and similarity score.
-
-        Raises:
-            TypeError:
-                If any of the input arguments are not of the expected
-                types.
-            ValueError:
-                If any of the input arguments are invalid or
-                inconsistent.
-        """
-
-        # Validating input
-        self._validate_positive_integer(max_similar_items, "max_similar_items")
-        self._validate_type(item_id_col, str, "item_id_col")
-        self._validate_type(item_id_col_similar, str, "item_id_col_similar")
-        self._validate_type(score_col, str, "score_col")
-        if filter_items is not None:
-            self._validate_type(filter_items, list, "filter_items")
-            if not all(isinstance(item_id, int) for item_id in filter_items):
-                msg = "filter_items must contain only integers"
-                self._logger.error(msg)
-                raise TypeError(msg)
-
-        # Filter only items that are presented in the model
-        if isinstance(filter_items, list) and len(filter_items) > 0:
-            filter_items = list(
-                set(filter_items) & set(self.item_id_encoder.classes_)
-            )
-            if len(filter_items) == 0:
-                self._logger.warning("No items to filter are in the model")
-            else:
-                filter_items = self.item_id_encoder.transform(filter_items)
-                rate = round(
-                    len(filter_items)
-                    / len(self.item_id_encoder.classes_)
-                    * 100,
-                    2,
-                )
-                self._logger.info(
-                    f"Found {len(filter_items)} ({rate}%) items from "
-                    f"{len(self.item_id_encoder.classes_)} to be filtered"
-                )
-
-        # generating similar items
-        item_ids_enc = list(range(len(self.item_id_encoder.classes_)))
-        similar_item_ids_enc, scores = self.model.similar_items(
-            item_ids_enc,
-            N=max_similar_items + 1,
-            filter_items=filter_items,
-        )
-        self._logger.info("Generated similar items")
-
-        # Create a DataFrame to hold the results
-        df = pd.DataFrame(
-            {
-                item_id_col: item_ids_enc,
-                item_id_col_similar: similar_item_ids_enc.tolist(),
-                score_col: scores.tolist(),
-            }
-        )
-        del item_ids_enc, scores
-        df = df.apply(pd.Series.explode)
-        for col, dtype in {
-            item_id_col: int,
-            item_id_col_similar: int,
-            score_col: float,
-        }.items():
-            df[col] = df[col].astype(dtype)
-
-        # Removing rows same as the original items
-        df = df.query(f"{item_id_col} != {item_id_col_similar}")
-
-        # Transforming the similar_item_id and item_id back to original
-        for col in [item_id_col, item_id_col_similar]:
-            df[col] = self.item_id_encoder.inverse_transform(df[col])
-        self._logger.info("Prepared a Dataframe with similar items")
-
-        return df
+        return output
 
 
 class Item2ItemModel(BaseRecommender):
@@ -1136,29 +1112,15 @@ class Item2ItemModel(BaseRecommender):
             f"{svd.explained_variance_ratio_.cumsum()[-1]:.4f}"
         )
 
-        # self.nn = NearestNeighbors(
-        #     n_neighbors=self.n_neighbors,
-        #     metric=self.similarity_criteria,
-        #     algorithm="ball_tree",
-        #     n_jobs=n_jobs,
-        # )
-        # self.nn.fit(self.item_features_matrix)
-        # self._logger.info("Fitted NearestNeighbors model")
-
         return self
 
-    def recommend(
+    def _recommend_on_batch(
         self,
         user_ids: List[int],
         user_items_matrix: csr_matrix,
         n_recommendations: int,
-        item_id_col: str,
-        user_id_col: str,
-        score_col: str,
-        batch_size: int = 100,
-        save_path: Path | None = None,
         filter_items: List[int] | None = None,
-    ) -> pd.DataFrame | None:
+    ) -> Dict[str, Any]:
         """
         Recommend items for the given user IDs.
 
@@ -1172,199 +1134,40 @@ class Item2ItemModel(BaseRecommender):
             n_recommendations (int):
                 The number of recommendations to generate for each
                 user.
-            user_id_col (str):
-                The column name in the DataFrame to contain user IDs.
-            item_id_col (str):
-                The column name in the DataFrame to contain item IDs.
-            score_col (str):
-                The column name in the DataFrame to contain the
-                scores of the recommendations.
-            batch_size (int):
-                The number of user IDs to process in each batch.
-                Defaults to 100.
-            save_path (Path | None):
-                The file path to save the DataFrame containing the
-                recommendations. If None, the DataFrame will not be
-                saved, but returned. Defaults to None.
             filter_items (List[int] | None, optional):
                 A list of item IDs to filter out from the
                 recommendations. Defaults to None.
 
         Returns:
-            pd.DataFrame | None:
-                A DataFrame containing the recommended item IDs and
-                their scores for each user. Returns None if no input
-                users were found within the fitted model, or save_path
-                was provided.
-
-        Raises:
-            TypeError:
-                If any of the input arguments are not of the expected
-                types.
-            ValueError:
-                If any of the input arguments are invalid or
-                inconsistent.
+            Dict[str, Any]:
+                A dictionary containing the recommended items
+                with the corresponding scores.
         """
 
-        # Validate input
-        self._validate_type(user_ids, list, "user_ids")
-        self._validate_type(user_items_matrix, csr_matrix, "user_items_matrix")
-        if not all(isinstance(user_id, int) for user_id in user_ids):
-            msg = "user_ids must contain only integers"
-            self._logger.error(msg)
-            raise ValueError(msg)
-        self._validate_type(n_recommendations, int, "n_recommendations")
-        self._validate_type(batch_size, int, "batch_size")
-        self._validate_type(item_id_col, str, "item_id_col")
-        self._validate_type(user_id_col, str, "user_id_col")
-        if save_path != None:
-            self._validate_type(save_path, Path, "save_path")
-            if save_path.suffix != ".parquet":
-                msg = "save_path must be a path to parquet file"
-                self._logger.error(msg)
-                raise ValueError(msg)
-        self._validate_positive_integer(n_recommendations, "n_recommendations")
-        self._validate_positive_integer(batch_size, "batch_size")
+        output = {}
 
-        # Filter only items that are presented in the model
-        if isinstance(filter_items, list) and len(filter_items) > 0:
-            filter_items = list(
-                set(filter_items) & set(self.item_id_encoder.classes_)
-            )
-            if len(filter_items) == 0:
-                self._logger.warning("No items to filter are in the model")
-            else:
-                filter_items = self.item_id_encoder.transform(
-                    filter_items
-                ).tolist()
-                rate = round(
-                    len(filter_items)
-                    / len(self.item_id_encoder.classes_)
-                    * 100,
-                    2,
-                )
-                self._logger.info(
-                    f"Found {len(filter_items)} ({rate}%) items from "
-                    f"{len(self.item_id_encoder.classes_)} to be filtered"
-                )
+        # Compute the number of items per user for normalization
+        user_items_count = user_items_matrix.getnnz(axis=1)
+        user_items_count[user_items_count == 0] = 1
 
-        # Filter user_items_matrix
-        user_items_matrix = user_items_matrix[:, self.item_mask]
-        user_items_matrix = user_items_matrix[self.user_mask, :]
-        self._logger.info("Filtered user_items_matrix")
+        # Compute users profiles
+        user_features_matrix = np.diag(1.0 / user_items_count).dot(
+            user_items_matrix.dot(self.item_features_matrix)
+        )
+        del user_items_count
 
-        # Filter only users that are presented in the model
-        n_users = len(user_ids)
-        user_ids = list(set(user_ids) & set(self.user_id_encoder.classes_))
-        if len(user_ids) == 0:
-            self._logger.warning("No users in the input are in the model")
-            return None
-        rate = round(len(user_ids) / n_users * 100, 2)
-        self._logger.info(
-            f"Found {len(user_ids)} ({rate}%) users from {n_users} in the model"
+        # Search for nearest items
+        output["scores"], output["item_ids"] = self.nn.kneighbors(
+            user_features_matrix,
+            n_recommendations,
         )
 
-        # Retrieve items that will not be filtered
-        if isinstance(filter_items, list) and len(filter_items) > 0:
-            item_ids_enc = list(
-                set(
-                    list(range(len(self.item_id_encoder.classes_)))
-                ).difference(filter_items)
-            )
-            encoder = LabelEncoder()
-            encoder.classes_ = np.array(
-                self.item_id_encoder.classes_[item_ids_enc]
-            )
-        else:
-            item_ids_enc = list(range(len(self.item_id_encoder.classes_)))
-            encoder = self.item_id_encoder
+        return output
 
-        # Fit the NearestNeighbors model
-        nn = NearestNeighbors(
-            n_neighbors=self.n_neighbors,
-            metric=self.similarity_criteria,
-            algorithm="ball_tree",
-            n_jobs=-1,
-        )
-        nn.fit(self.item_features_matrix[item_ids_enc, :])
-        self._logger.info("Fitted NearestNeighbors model")
-
-        # Empty save_path if parquet file exists
-        if save_path and save_path.exists():
-            os.remove(save_path)
-
-        # Create an empty list to store recommendations
-        all_recommendations = []
-
-        # Process batches of users
-        for batch_num in tqdm(
-            range(int(np.ceil(len(user_ids) / batch_size))),
-            desc="Processing batches",
-        ):
-
-            start_idx = batch_num * batch_size
-            end_idx = min((batch_num + 1) * batch_size, len(user_ids))
-
-            batch_user_ids = self.user_id_encoder.transform(
-                user_ids[start_idx:end_idx]
-            )
-
-            # Slice once and reuse
-            batch_user_items_matrix = user_items_matrix[batch_user_ids]
-
-            # Compute the number of items per user for normalization
-            user_items_count = batch_user_items_matrix.getnnz(axis=1)
-            user_items_count[user_items_count == 0] = 1
-
-            # Compute users profiles
-            batch_user_features_matrix = np.diag(1.0 / user_items_count).dot(
-                batch_user_items_matrix.dot(self.item_features_matrix)
-            )
-            del user_items_count
-
-            # Search for nearest items
-            batch_scores, item_ids = nn.kneighbors(
-                batch_user_features_matrix,
-                n_recommendations,
-            )
-
-            batch_user_ids = self.user_id_encoder.inverse_transform(
-                batch_user_ids
-            )
-
-            df = pd.DataFrame(
-                {
-                    user_id_col: batch_user_ids,
-                    item_id_col: item_ids.tolist(),
-                    score_col: batch_scores.tolist(),
-                }
-            )
-            del batch_user_ids, batch_scores, item_ids
-
-            df = df.apply(pd.Series.explode)
-
-            for col, dtype in {
-                user_id_col: int,
-                item_id_col: int,
-                score_col: float,
-            }.items():
-                df[col] = df[col].astype(dtype)
-            df = df.sort_values(
-                by=[user_id_col, score_col], ascending=[True, True]
-            ).reset_index(drop=True)
-
-            # Transforming the item_ids back to their original labels
-            df[item_id_col] = encoder.inverse_transform(df[item_id_col])
-
-            if save_path:
-                df.to_parquet(
-                    save_path,
-                    engine="fastparquet",
-                    append=save_path.exists(),
-                )
-            else:
-                all_recommendations.append(df)
-            del df
-
-        if save_path == None:
-            return pd.concat(all_recommendations)
+    def get_similar_items(self, *args, **kwargs) -> None:
+        """
+        This method is not implemented.
+        """
+        msg = "get_similar_items method is not implemented"
+        self._logger.error(msg)
+        raise NotImplementedError(msg)

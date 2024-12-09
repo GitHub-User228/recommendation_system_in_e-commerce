@@ -2,7 +2,7 @@ import pandas as pd
 import seaborn as sns
 from pathlib import Path
 import matplotlib.pyplot as plt
-from typing import Literal, List, Dict
+from typing import Literal, List, Dict, Tuple
 
 from scripts import logger
 from scripts.utils import get_bins
@@ -56,15 +56,51 @@ def custom_hist_multiplot(
         show (bool, optional):
             Whether to show the plot. Defaults to True.
     """
+
+    def get_figure() -> Tuple[plt.Figure, plt.Axes]:
+        """
+        Returns the figure and axes objects for the plot.
+
+        Returns:
+            Tuple[plt.Figure, plt.Axes]:
+                The figure and axes objects for the plot.
+        """
+        n_cols = len(columns)
+        if features_kind == "num":
+            fig, axs = plt.subplots(
+                n_cols,
+                figsize=(15 * width_factor, 4 * n_cols * height_factor),
+            )
+        elif features_kind == "cat":
+            if cat_orient == "h":
+                nunique = sum([data[col].nunique() for col in columns])
+                ratios = [data[col].nunique() / nunique for col in columns]
+                fig, axs = plt.subplots(
+                    n_cols,
+                    figsize=(
+                        10 * width_factor,
+                        0.55 * nunique * height_factor,
+                    ),
+                    gridspec_kw={"height_ratios": ratios},
+                )
+            elif cat_orient == "v":
+                fig, axs = plt.subplots(
+                    n_cols,
+                    figsize=(
+                        15 * width_factor,
+                        4 * n_cols * height_factor,
+                    ),
+                )
+        return fig, [axs] if n_cols == 1 else axs
+
     if isinstance(data, dict):
         columns = list(data.keys())
+
+    # Get the figure and axes objects
+    fig, axs = get_figure()
+
+    # Plot the histograms
     if features_kind == "num":
-        fig, axs = plt.subplots(
-            len(columns),
-            figsize=(15 * width_factor, 4 * len(columns) * height_factor),
-        )
-        if len(columns) == 1:
-            axs = [axs]
         if title:
             axs[0].set_title(title, fontsize=title_fontsize)
         for i, col in enumerate(columns):
@@ -92,21 +128,6 @@ def custom_hist_multiplot(
             if hue:
                 sns.move_legend(axs[i], "upper left", bbox_to_anchor=(1, 1))
     elif features_kind == "cat":
-        if cat_orient == "h":
-            nunique = sum([data[col].nunique() for col in columns])
-            ratios = [data[col].nunique() / nunique for col in columns]
-            fig, axs = plt.subplots(
-                len(columns),
-                figsize=(10 * width_factor, 0.55 * nunique * height_factor),
-                gridspec_kw={"height_ratios": ratios},
-            )
-        elif cat_orient == "v":
-            fig, axs = plt.subplots(
-                len(columns),
-                figsize=(15 * width_factor, 4 * len(columns) * height_factor),
-            )
-        if len(columns) == 1:
-            axs = [axs]
         if title:
             fig.suptitle(title, fontsize=title_fontsize)
         for it, col in enumerate(columns):
@@ -131,15 +152,12 @@ def custom_hist_multiplot(
             if cat_orient == "h":
                 axs[it].set_ylabel("")
                 axs[it].set_title(y)
-                # if it < len(columns) - 1:
                 axs[it].set_xlabel("")
                 axs[it].set_yticks(sorted(data2[col].unique()))
                 axs[it].grid(axis="y", linestyle="")
-                # axs[it].set_ylim(data2[col].min() - 0.5, data2[col].max() + 0.5)
             elif cat_orient == "v":
                 axs[it].set_xticks(sorted(data2[col].unique()))
                 axs[it].grid(axis="x", linestyle="")
-                # axs[it].set_xlim(data2[col].min() - 1, data2[col].max() + 1)
             if hue:
                 sns.move_legend(axs[it], "upper left", bbox_to_anchor=(1, 1))
     fig.tight_layout()

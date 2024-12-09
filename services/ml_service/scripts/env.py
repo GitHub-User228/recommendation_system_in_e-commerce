@@ -9,9 +9,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 
 
-class EnviromentVariables(BaseSettings):
+class EnvironmentVariables(BaseSettings):
     """
-    Defines an `EnviromentVariables` class that loads and validates
+    Defines an `EnvironmentVariables` class that loads and validates
     environment variables that are used in the project.
     """
 
@@ -39,20 +39,19 @@ class EnviromentVariables(BaseSettings):
 
         Returns:
             Self:
-                The updated `EnviromentVariables` instance with the
+                The updated `EnvironmentVariables` instance with the
                 created directories.
         """
         for k, v in self.__dict__.items():
             if isinstance(v, Path):
-                if not v.exists():
-                    v.mkdir(parents=True, exist_ok=True)
+                v.mkdir(parents=True, exist_ok=True)
         return self
 
     @model_validator(mode="before")
     @classmethod
     def validate_before(cls, data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Validates the input data for the `EnviromentVariables` class,
+        Validates the input data for the `EnvironmentVariables` class,
         ensuring that only the fields defined in the class are used.
         Also converts any directory from relative to absolute paths.
 
@@ -82,6 +81,6 @@ class EnviromentVariables(BaseSettings):
         return out_data
 
 
-env_vars = EnviromentVariables(
+env_vars = EnvironmentVariables(
     _env_file=Path(PROJECT_DIR.parent, ".env"), _env_file_encoding="utf-8"
 )

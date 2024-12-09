@@ -411,6 +411,10 @@ class ALSModelComponentConfig(BaseConfig):
     )
 
     # ALS model fields
+    batch_size: int = Field(
+        ge=1,
+        description="Batch size.",
+    )
     n_recommendations: int = Field(
         ge=1,
         description="Number of recommendations",
@@ -501,6 +505,10 @@ class BPRModelComponentConfig(BaseConfig):
     )
 
     # BPR model fields
+    batch_size: int = Field(
+        ge=1,
+        description="Batch size.",
+    )
     n_recommendations: int = Field(
         ge=1,
         description="Number of recommendations",
@@ -589,7 +597,7 @@ class Item2ItemModelComponentConfig(BaseConfig):
     # Item2Item model fields
     batch_size: int = Field(
         ge=1,
-        description="Batch size for the Item2ItemModel model.",
+        description="Batch size.",
     )
     n_recommendations: int = Field(
         ge=1,

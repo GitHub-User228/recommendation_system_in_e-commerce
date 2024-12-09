@@ -20,6 +20,7 @@ EDAComponentConfig:
 
 ALSModelComponentConfig:
   run_name: 'base_model_als'
+  batch_size: 2000
   n_recommendations: 10
   min_users_per_item: 5
   max_similar_items: 10
@@ -32,6 +33,7 @@ ALSModelComponentConfig:
   random_state: 42
 BPRModelComponentConfig:
   run_name: 'base_model_bpr'
+  batch_size: 2000
   n_recommendations: 10
   min_users_per_item: 5
   max_similar_items: 10
